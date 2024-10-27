@@ -5,7 +5,7 @@ export type RequestType =
   | "add_ships"
   | "attack"
   | "randomAttack";
-  
+
 export type ResponseType =
   | "reg"
   | "update_winners"
@@ -18,7 +18,8 @@ export type ResponseType =
 
 export interface IWsMessage {
   type: RequestType;
-  data: Record<string, unknown>;
+  data: string;
+  clients: Set<WebSocket>;
 }
 
 export interface ISocket {
@@ -45,6 +46,18 @@ export type CreateGameResponse = {
   idGame: string;
   idPlayer: string;
 };
+
+export interface Game {
+  idGame: string;
+  players: GamePlayer[];
+  roomId: string;
+}
+
+export interface GamePlayer {
+  ships?: Ship[];
+  playerIdInPlayerDb: string;
+  idPlayerInGame: string;
+}
 
 export type UpdateRoomResponse = RoomToUpdate[];
 
@@ -87,13 +100,14 @@ export type FinishResponse = {
 
 export type RegistrationRequest = Omit<Player, "index">;
 
-export type RegistrationResponse = Player & {
+export type RegistrationResponse = Omit<Player, "password" | "wins"> & {
   error: boolean;
   errorText: string;
 };
 
 export interface Player extends RoomUser {
   password: string;
+  wins: number;
 }
 
 export interface RoomUser {
