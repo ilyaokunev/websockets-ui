@@ -1,26 +1,42 @@
 import {
   AddPlayerToRoomRequest,
   AddShipsRequest,
+  AttackRequest,
+  AttackResponse,
   CreateGameResponse,
+  FinishResponse,
   ISocket,
   IWsMessage,
   RegistrationRequest,
   RegistrationResponse,
   StartGameResponse,
+  TurnResponse,
   UpdateWinnersResponse,
 } from "./types";
 import {
   addShips,
   addUserToRoom,
+  addWin,
+  changeTurn,
   checkIfBothPlayersReady,
+  checkIfGameFinish,
   checkIfPlayerExists,
   checkIfPlayerInRoom,
+  checkIsPlayersTurn,
   createGame,
   createRoom,
+  deleteRoom,
+  gameFinish,
+  getCurrentPlayerIdForTurn,
+  getGamePlayerIdAndGameIdFromPlayerId,
   getPlayer,
+  getPlayerIdFromGamePlayerId,
   getPlayersForCreateGame,
+  getRoomIdByPlayerId,
+  getRoomPlayers,
   getRoomsWithSinglePlayer,
   getWinners,
+  makeAttack,
   registration,
 } from "../db/utils.js";
 import { v4 as uuid } from "uuid";
@@ -65,8 +81,52 @@ export default class WsHandler {
         this.addShips(shipsData);
         if (this.checkIsReady(shipsData.gameId)) {
           this.startGame(shipsData.gameId);
+          this.turn(shipsData.gameId);
         }
         break;
+
+      case "attack":
+        const attackData = JSON.parse(data) as AttackRequest;
+        if (this.isPlayerTurn(attackData)) {
+          this.makeAttack(attackData);
+          if (this.isGameFinish(attackData)) {
+            this.updateWinners(clients);
+            this.cleanupAfterGame(attackData);
+          }
+          this.turn(attackData.gameId);
+        }
+        break;
+    }
+  }
+
+  public close(clients: Set<WebSocket>) {
+    const roomId = getRoomIdByPlayerId(roomsDb, this.playerId!);
+
+    if (roomId) {
+      const roomPlayers = getRoomPlayers(roomsDb, roomId);
+      const playerToWin = roomPlayers.filter((player) => player.index != this.playerId)[0];
+
+      if (playerToWin) {
+        const { gameId, player } = getGamePlayerIdAndGameIdFromPlayerId(gamesDb, this.playerId!)!;
+
+        const responseObj: FinishResponse = {
+          winPlayer: player!.idPlayerInGame,
+        };
+
+        const response = {
+          type: "finish",
+          id: 0,
+          data: JSON.stringify(responseObj),
+        };
+
+        gameFinish(gamesDb, gameId);
+        playerToSocketMap[player!.playerIdInPlayerDb].send(JSON.stringify(response));
+        addWin(playersDb, playerToWin.index);
+        this.updateWinners(clients);
+      }
+
+      deleteRoom(roomsDb, roomId);
+      this.updateRoom(clients);
     }
   }
 
@@ -207,5 +267,96 @@ export default class WsHandler {
 
       playerToSocketMap[player.playerIdInPlayerDb].send(JSON.stringify(response));
     });
+  }
+
+  private turn(gameId: string) {
+    const currentTurn = getCurrentPlayerIdForTurn(gamesDb, gameId);
+
+    getPlayersForCreateGame(gamesDb, gameId).forEach((player) => {
+      const responseObj: TurnResponse = {
+        currentPlayer: currentTurn,
+      };
+
+      const response = {
+        type: "turn",
+        id: 0,
+        data: JSON.stringify(responseObj),
+      };
+
+      playerToSocketMap[player.playerIdInPlayerDb].send(JSON.stringify(response));
+    });
+
+    changeTurn(gamesDb, gameId);
+  }
+
+  private isPlayerTurn(attackData: AttackRequest) {
+    return checkIsPlayersTurn(gamesDb, attackData.gameId, attackData.indexPlayer);
+  }
+
+  private makeAttack(attackData: AttackRequest) {
+    const attackResult = makeAttack(gamesDb, attackData);
+
+    getPlayersForCreateGame(gamesDb, attackData.gameId).forEach((player) => {
+      const responseObj: AttackResponse = {
+        status: attackResult,
+        currentPlayer: attackData.indexPlayer,
+        position: {
+          x: attackData.x,
+          y: attackData.y,
+        },
+      };
+
+      const response = {
+        type: "attack",
+        id: 0,
+        data: JSON.stringify(responseObj),
+      };
+
+      playerToSocketMap[player.playerIdInPlayerDb].send(JSON.stringify(response));
+    });
+  }
+
+  private isGameFinish(attackData: AttackRequest) {
+    const isFinishes = checkIfGameFinish(gamesDb, attackData);
+
+    if (isFinishes) {
+      getPlayersForCreateGame(gamesDb, attackData.gameId).forEach((player) => {
+        const responseObj: FinishResponse = {
+          winPlayer: attackData.indexPlayer,
+        };
+
+        const response = {
+          type: "finish",
+          id: 0,
+          data: JSON.stringify(responseObj),
+        };
+
+        playerToSocketMap[player.playerIdInPlayerDb].send(JSON.stringify(response));
+      });
+
+      const playerId = getPlayerIdFromGamePlayerId(
+        gamesDb,
+        attackData.gameId,
+        attackData.indexPlayer
+      );
+
+      addWin(playersDb, playerId);
+      gameFinish(gamesDb, attackData.gameId);
+    }
+
+    return isFinishes;
+  }
+
+  private cleanupAfterGame(attackData: AttackRequest) {
+    const playerId = getPlayerIdFromGamePlayerId(
+      gamesDb,
+      attackData.gameId,
+      attackData.indexPlayer
+    );
+    const roomId = getRoomIdByPlayerId(roomsDb, playerId);
+
+    if (roomId) {
+      deleteRoom(roomsDb, roomId);
+    }
   }
 }

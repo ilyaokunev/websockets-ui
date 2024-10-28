@@ -16,18 +16,7 @@ ws.on("connection", (socket) => {
     const { type, data } = JSON.parse(message.toString()) as IWsMessage;
 
     handlerInstance.handle({ type, data, clients: ws.clients as unknown as Set<WebSocket> });
-
-    // const options = {
-    //   hostname: "localhost",
-    //   port: process.env.DB_PORT,
-    //   method: 'GET',
-    //   url:'/'
-    // };
-
-    // const req = http.request(options, (res) => {
-    //   console.log(res, 'res from db')
-    // })
-
-    // req.on('error', console.log)
   });
+
+  socket.on("close", () =>  handlerInstance.close( ws.clients as unknown as Set<WebSocket>));
 });

@@ -1,10 +1,13 @@
 import {
   AddShipsRequest,
+  AttackRequest,
+  AttackResult,
   Game,
   Player,
   RegistrationRequest,
   RoomToUpdate,
   RoomUser,
+  Ship,
 } from "src/ws_server/types";
 import { v4 as uuid } from "uuid";
 
@@ -47,6 +50,22 @@ export function checkIfPlayerInRoom(roomDb: Map<string, RoomToUpdate>, player: P
   return !!roomsWithPlayer.length;
 }
 
+export function getRoomIdByPlayerId(roomDb: Map<string, RoomToUpdate>, playerId: string) {
+  const roomsWithPlayer = Array.from(roomDb.values()).filter(
+    (room) => !!room.roomUsers.find((user) => user.index === playerId)
+  );
+
+  return roomsWithPlayer.length ? roomsWithPlayer[0].roomId : null;
+}
+
+export function deleteRoom(roomDb: Map<string, RoomToUpdate>, roomId: string) {
+  roomDb.delete(roomId);
+}
+
+export function getRoomPlayers(roomDb: Map<string, RoomToUpdate>, roomId: string) {
+  return roomDb.get(roomId)!.roomUsers;
+}
+
 export function createRoom(roomDb: Map<string, RoomToUpdate>, player: Player) {
   const roomId = uuid();
 
@@ -63,12 +82,16 @@ export function createRoom(roomDb: Map<string, RoomToUpdate>, player: Player) {
   roomDb.set(roomId, room);
 }
 
-export function addUserToRoom(roomDb: Map<string, RoomToUpdate>, roomId: string, player: Player): number {
+export function addUserToRoom(
+  roomDb: Map<string, RoomToUpdate>,
+  roomId: string,
+  player: Player
+): number {
   const room = roomDb.get(roomId)!;
 
   const checkIfUserInRoomIsCurrent = room.roomUsers.filter((user) => user.index === player.index);
 
-  if(room.roomUsers.length === 0) {
+  if (room.roomUsers.length === 0) {
     room.roomUsers.push({ name: player.name, index: player.index });
   }
 
@@ -91,12 +114,15 @@ export function createGame(gamesDb: Map<string, Game>, roomUsers: RoomUser[], ro
       {
         playerIdInPlayerDb: roomUsers[0].index,
         idPlayerInGame: playerOneId,
+        shipsLeft: 10,
       },
       {
         playerIdInPlayerDb: roomUsers[1].index,
         idPlayerInGame: playerTwoId,
+        shipsLeft: 10,
       },
     ],
+    currentTurn: playerOneId,
   };
 
   gamesDb.set(idGame, game);
@@ -109,7 +135,12 @@ export function addShips(gamesDb: Map<string, Game>, shipsData: AddShipsRequest)
     (player) => player.idPlayerInGame === shipsData.indexPlayer
   )!;
 
-  playerInGame.ships = shipsData.ships;
+  const ships = shipsData.ships.map((ship) => ({
+    ...ship,
+    hits: [],
+  }));
+
+  playerInGame.ships = ships;
 }
 
 export function checkIfBothPlayersReady(gamesDb: Map<string, Game>, gameId: string) {
@@ -120,4 +151,117 @@ export function checkIfBothPlayersReady(gamesDb: Map<string, Game>, gameId: stri
 export function getPlayersForCreateGame(gamesDb: Map<string, Game>, gameId: string) {
   const game = gamesDb.get(gameId)!;
   return game.players;
+}
+
+export function getCurrentPlayerIdForTurn(gamesDb: Map<string, Game>, gameId: string) {
+  return gamesDb.get(gameId)!.currentTurn;
+}
+
+export function changeTurn(gamesDb: Map<string, Game>, gameId: string) {
+  const game = gamesDb.get(gameId)!;
+
+  const newCurrentPlayer = game.players.find(
+    (player) => player.idPlayerInGame !== game.currentTurn
+  );
+
+  game.currentTurn = newCurrentPlayer!.idPlayerInGame;
+}
+
+export function checkIsPlayersTurn(gamesDb: Map<string, Game>, gameId: string, playerId: string) {
+  const game = gamesDb.get(gameId)!;
+
+  return game.currentTurn !== playerId;
+}
+
+export function makeAttack(gamesDb: Map<string, Game>, attackData: AttackRequest): AttackResult {
+  const game = gamesDb.get(attackData.gameId)!;
+
+  const playerToCheckAttack = game.players.find(
+    (player) => player.idPlayerInGame === game.currentTurn
+  )!;
+  const shipsToCheck = playerToCheckAttack.ships!;
+
+  const attackResult = getAttackResult(attackData.x, attackData.y, shipsToCheck);
+
+  if (attackResult === "killed") {
+    --playerToCheckAttack.shipsLeft;
+  }
+  return attackResult;
+}
+
+export function getAttackResult(x: number, y: number, shipsToCheck: Ship[]): AttackResult {
+  for (let ship of shipsToCheck) {
+    let shipCells = [];
+
+    for (let i = 0; i < ship.length; i++) {
+      const currentCell = {
+        x: ship.direction ? ship.position.x : ship.position.x + i,
+        y: ship.direction ? ship.position.y + i : ship.position.y,
+      };
+
+      const isHitted = ship.hits.find(
+        (hittedCell) => hittedCell.x === currentCell.x && hittedCell.y === currentCell.y
+      );
+
+      shipCells.push({
+        ...currentCell,
+        isHit: isHitted,
+      });
+    }
+
+    for (let cell of shipCells) {
+      if (cell.x === x && cell.y === y) {
+        if (cell.isHit) {
+          continue;
+        } else {
+          ship.hits.push({
+            x: cell.x,
+            y: cell.y,
+          });
+          let shipKilled = shipCells.length === ship.hits.length;
+          return shipKilled ? "killed" : "shot";
+        }
+      }
+    }
+  }
+  return "miss";
+}
+
+export function checkIfGameFinish(gamesDb: Map<string, Game>, attackData: AttackRequest) {
+  const game = gamesDb.get(attackData.gameId)!;
+  const playerToCheck = game.players.find((player) => player.idPlayerInGame === game.currentTurn)!;
+
+  return !playerToCheck.shipsLeft;
+}
+
+export function addWin(playersDb: Map<string, Player>, winnerId: string) {
+  const player = playersDb.get(winnerId)!;
+  player.wins++;
+}
+
+export function getPlayerIdFromGamePlayerId(
+  gamesDb: Map<string, Game>,
+  gameId: string,
+  playerId: string
+) {
+  const game = Array.from(gamesDb.values()).find((game) => game.idGame === gameId)!;
+
+  return game.players.find((player) => player.idPlayerInGame === playerId)!.playerIdInPlayerDb;
+}
+
+export function gameFinish(gamesDb: Map<string, Game>, gameId: string) {
+  gamesDb.get(gameId)!.finished = true;
+}
+
+export function getGamePlayerIdAndGameIdFromPlayerId(gamesDb: Map<string, Game>, playerId: string) {
+  const gameWithCurrentPlayer = Array.from(gamesDb.values()).filter(
+    (game) => game.players[0].playerIdInPlayerDb === playerId || game.players[1].playerIdInPlayerDb
+  );
+
+  const currentGame = gameWithCurrentPlayer.find((game) => !game.finished)!;
+
+  return {
+    gameId: currentGame.idGame,
+    player: currentGame.players.find((gamePlayer) => gamePlayer.playerIdInPlayerDb !== playerId),
+  };
 }

@@ -51,12 +51,15 @@ export interface Game {
   idGame: string;
   players: GamePlayer[];
   roomId: string;
+  currentTurn: string;
+  finished?: boolean;
 }
 
 export interface GamePlayer {
   ships?: Ship[];
   playerIdInPlayerDb: string;
   idPlayerInGame: string;
+  shipsLeft: number;
 }
 
 export type UpdateRoomResponse = RoomToUpdate[];
@@ -80,10 +83,12 @@ export type AttackRequest = {
 };
 
 export type AttackResponse = {
-  position: CellPosition;
+  position: Omit<CellPosition, 'isHit'>;
   currentPlayer: string;
-  status: "miss" | "killed" | "shot";
+  status: AttackResult;
 };
+
+export type AttackResult = "miss" | "killed" | "shot";
 
 export type RandomAttackRequest = {
   gameId: string;
@@ -119,8 +124,11 @@ export interface Ship {
   position: CellPosition;
   direction: boolean;
   length: number;
-  type: "small" | "medium" | "large" | "huge";
+  type: ShipType;
+  hits:CellPosition[]
 }
+
+export type ShipType = "small" | "medium" | "large" | "huge";
 
 export interface CellPosition {
   x: number;
