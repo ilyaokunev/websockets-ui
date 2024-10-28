@@ -7,6 +7,7 @@ import {
   FinishResponse,
   ISocket,
   IWsMessage,
+  RandomAttackRequest,
   RegistrationRequest,
   RegistrationResponse,
   StartGameResponse,
@@ -85,7 +86,7 @@ export default class WsHandler {
         }
         break;
 
-      case "attack":
+      case "attack": {
         const attackData = JSON.parse(data) as AttackRequest;
         if (this.isPlayerTurn(attackData)) {
           this.makeAttack(attackData);
@@ -96,6 +97,27 @@ export default class WsHandler {
           this.turn(attackData.gameId);
         }
         break;
+      }
+
+      case "randomAttack": {
+        const randomAttackData = JSON.parse(data) as RandomAttackRequest;
+
+        const attackData: AttackRequest = {
+          gameId: randomAttackData.gameId,
+          indexPlayer: randomAttackData.indexPlayer,
+          x: this.getRandom(0, 9),
+          y: this.getRandom(0, 9),
+        };
+        if (this.isPlayerTurn(attackData)) {
+          this.makeAttack(attackData);
+          if (this.isGameFinish(attackData)) {
+            this.updateWinners(clients);
+            this.cleanupAfterGame(attackData);
+          }
+          this.turn(attackData.gameId);
+        }
+        break;
+      }
     }
   }
 
@@ -358,5 +380,9 @@ export default class WsHandler {
     if (roomId) {
       deleteRoom(roomsDb, roomId);
     }
+  }
+
+  private getRandom(min: number, max: number) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 }
